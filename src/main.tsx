@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { saveRevision } from './vault/sync.mjs';
 import { createRoot } from 'react-dom/client';
 import { queryAccounts, validateAccount } from './accounts.mjs';
 import './style.css';
@@ -89,7 +90,36 @@ function App() {
     [error, setError] = useState(''),
     [googleDialog, setGoogleDialog] = useState(false),
     [deleteTarget, setDeleteTarget] = useState<Account | null>(null),
-    [quickEntry, setQuickEntry] = useState('');
+    [quickEntry, setQuickEntry] = useState(''),
+    [session, setSession] = useState<any>(null),
+    [syncStatus, setSyncStatus] = useState('Chưa kết nối'),
+    [retry, setRetry] = useState(0);
+  const savedAccounts = useRef<Account[] | null>(null);
+  const latestAccounts = useRef(accounts);
+  const head = useRef<string | null>(null);
+  const running = useRef(false);
+  const stopped = useRef(false);
+  latestAccounts.current = accounts;
+  useEffect(() => {
+    if (!session || savedAccounts.current === accounts || running.current || stopped.current) return;
+    let timer = window.setTimeout(async () => {
+      running.current = true; setSyncStatus('Đang lưu lên Google Drive…');
+      const snapshot = latestAccounts.current;
+      try {
+        const result = await saveRevision(session.remote, session.password, head.current, snapshot);
+        head.current = result.head; savedAccounts.current = snapshot;
+        setSyncStatus(latestAccounts.current === snapshot ? 'Đã lưu lên Google Drive' : 'Đang chờ lưu…');
+      } catch (e: any) {
+        stopped.current = true;
+        setSyncStatus(e?.message === 'VAULT_CONFLICT' ? 'Xung đột dữ liệu: chưa lưu. Giữ trang mở để tránh mất thay đổi.' : 'Lưu thất bại: giữ trang mở và thử lại.');
+      } finally { running.current = false; setRetry(v => v + 1); }
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [accounts, session, retry]);
+  useEffect(() => {
+    const handler = (event: BeforeUnloadEvent) => { if (session && savedAccounts.current !== latestAccounts.current) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', handler); return () => window.removeEventListener('beforeunload', handler);
+  }, [session]);
   const active = accounts.filter(a => !!a.deleted === trash);
   const result = queryAccounts(active, {
     search,
@@ -162,17 +192,17 @@ function App() {
             setPage(1);
           }}
         />
-        <div className="connection">● Google Drive: Chưa kết nối</div>
-        <button className="primary" onClick={() => setGoogleDialog(true)}>
-          Kết nối Google Drive
+        <div className="connection" role="status">● {syncStatus}</div>
+        <button className="primary" onClick={() => {
+          if (!session) { setGoogleDialog(true); return; }
+          if (running.current || savedAccounts.current !== latestAccounts.current) { setSyncStatus('Chưa lưu xong. Hãy giữ trang mở và thử lại.'); return; }
+          savedAccounts.current = null; head.current = null; setAccounts([]); setSession(null); setShown([]); setSyncStatus('Chưa kết nối');
+        }}>
+          {session ? 'Khóa kho / đổi tài khoản' : 'Kết nối Google Drive'}
         </button>
       </header>
       <main>
-        <div className="notice">
-          {window.anynote
-            ? 'BẢN THỬ NGHIỆM · Dữ liệu chỉ lưu trong bộ nhớ và sẽ mất khi đóng ứng dụng. Không nhập mật khẩu hoặc tài khoản thật.'
-            : 'BẢN WEB THỬ NGHIỆM · Dữ liệu chỉ lưu trong bộ nhớ và sẽ mất khi đóng hoặc tải lại trang. Không nhập mật khẩu hoặc tài khoản thật.'}
-        </div>
+        <div className="notice">{session ? syncStatus : 'Kết nối Google Drive để mở kho. Phiên bản đang thử nghiệm; chỉ dùng dữ liệu giả.'}{session && stopped.current && <button onClick={() => { stopped.current = false; setRetry(v => v + 1); }}>Thử lưu lại</button>}</div>
         <div className="stats">
           {[
             ['Tổng tài khoản', accounts.filter(a => !a.deleted).length],
@@ -210,7 +240,7 @@ function App() {
               <option>Tất cả</option>
               {statuses.map(s => <option key={s}>{s}</option>)}
             </select>
-            <button className="primary" onClick={() => setDraft({ ...empty(), group: group === 'Tất cả' ? 'Khác' : group })}>
+            <button className="primary" disabled={!session} onClick={() => setDraft({ ...empty(), group: group === 'Tất cả' ? 'Khác' : group })}>
               ＋ Thêm mới
             </button>
           </div>
@@ -337,7 +367,7 @@ function App() {
           </div>
         </div>
       )}
-      {googleDialog && <GoogleConnect onClose={() => setGoogleDialog(false)} />}
+      {googleDialog && <GoogleConnect onClose={() => setGoogleDialog(false)} onConnected={(newSession, loadedAccounts) => { savedAccounts.current = loadedAccounts; head.current = newSession.head; stopped.current = false; setAccounts(loadedAccounts); setSession(newSession); setSyncStatus('Đã mở kho Google Drive'); setGoogleDialog(false); }} />}
       {draft && (
         <div className="overlay">
           <div className="modal">
@@ -353,10 +383,6 @@ function App() {
                 ✕
               </button>
             </div>
-            <p className="warning">
-              Chỉ nhập dữ liệu giả. Nội dung không được lưu sau khi đóng ứng
-              dụng.
-            </p>
             {!isEditing && (
               <div className="quick-entry">
                 <label htmlFor="new-account-group">Nhóm tài khoản</label>
@@ -365,7 +391,6 @@ function App() {
                 </select>
                 <label htmlFor="quick-entry">Dán thông tin tài khoản</label>
                 <textarea id="quick-entry" rows={6} autoComplete="off" spellCheck={false} value={quickEntry} placeholder="Mỗi dòng một tài khoản: ID | Mật khẩu | ..." onChange={e => setQuickEntry(e.target.value)} />
-                <small>Mỗi dòng một tài khoản: ID | Mật khẩu | ... Phần mềm tìm khóa FA và email theo định dạng; dòng gốc được giữ để kiểm tra.</small>
               </div>
             )}
             {isEditing && <div className="fields">

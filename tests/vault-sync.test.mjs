@@ -13,3 +13,10 @@ test('rejects stale writes and preserves the existing revisions',async()=>{
  await assert.rejects(saveRevision(r,'pass',null,[]),/CONFLICT/);
  assert.equal(r.files.length,1);
 });
+test('concurrent revisions remain intact and trigger a conflict',async()=>{
+ const r=remote();const root=await saveRevision(r,'pass',null,[]);
+ const [a,b]=await Promise.allSettled([saveRevision(r,'pass',root.head,[{id:'a'}]),saveRevision(r,'pass',root.head,[{id:'b'}])]);
+ assert.ok(a.status==='rejected' || b.status==='rejected');
+ assert.equal(r.files.length,3);
+ await assert.rejects(loadHistory(r,'pass'),/CONFLICT/);
+});

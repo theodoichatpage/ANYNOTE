@@ -1,86 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, {useEffect, useState} from 'react';
+import {listVaultFiles, readVaultRevision, uploadVaultRevision} from './vault/drive.mjs';
+import {loadHistory, saveRevision} from './vault/sync.mjs';
 
-declare global {
-  interface Window { google?: any; gapi?: any }
-}
-
-type Props = { onClose: () => void };
-type Tab = { id: number; title: string };
-const SCOPE = 'https://www.googleapis.com/auth/drive.file';
-
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-google-src="${src}"]`) as HTMLScriptElement | null;
-    if (existing?.dataset.loaded === 'true') return resolve();
-    const script = existing || document.createElement('script');
-    script.addEventListener('load', () => { script.dataset.loaded = 'true'; resolve(); }, { once: true });
-    script.addEventListener('error', () => reject(new Error('Không tải được thư viện Google.')), { once: true });
-    if (!existing) { script.dataset.googleSrc = src; script.src = src; script.async = true; document.head.appendChild(script); }
-  });
-}
-
-export default function GoogleConnect({ onClose }: Props) {
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
-  const apiKey = import.meta.env.VITE_GOOGLE_PICKER_API_KEY || '';
-  const projectNumber = import.meta.env.VITE_GOOGLE_PROJECT_NUMBER || '';
-  const [ready, setReady] = useState(false);
-  const [message, setMessage] = useState('Đang tải thành phần Google…');
-  const [tabs, setTabs] = useState<Tab[]>([]);
-  const [fileName, setFileName] = useState('');
-
-  useEffect(() => {
-    let active = true;
-    Promise.all([
-      loadScript('https://accounts.google.com/gsi/client'),
-      loadScript('https://apis.google.com/js/api.js'),
-    ]).then(() => new Promise<void>((resolve, reject) => {
-      window.gapi.load('picker', { callback: resolve, onerror: () => reject(new Error('Không tải được Google Picker.')), timeout: 10000, ontimeout: () => reject(new Error('Tải Google Picker quá thời gian.')) });
-    })).then(() => { if (active) { setReady(true); setMessage('Sẵn sàng kết nối khi Google Cloud đã được cấu hình.'); } })
-      .catch(() => { if (active) setMessage('Không tải được thành phần Google. Kiểm tra kết nối mạng hoặc tiện ích chặn trình duyệt.'); });
-    return () => { active = false; };
-  }, []);
-
-  function connect() {
-    if (!clientId.trim().endsWith('.apps.googleusercontent.com') || !apiKey.trim() || !/^\d+$/.test(projectNumber.trim())) {
-      setMessage('AnyNote chưa được cấu hình Google Cloud. Vui lòng hoàn tất cấu hình ứng dụng trước khi kết nối.'); return;
-    }
-    setMessage('Đang chờ bạn cấp quyền trên Google…');
-    const client = window.google.accounts.oauth2.initTokenClient({
-      client_id: clientId.trim(), scope: SCOPE,
-      error_callback: () => setMessage('Cửa sổ đăng nhập bị đóng hoặc không thể mở. Hãy thử lại.'),
-      callback: (result: { access_token?: string; error?: string }) => {
-        if (!result.access_token || result.error) { setMessage('Không được cấp quyền. Hãy kiểm tra cấu hình và thử lại.'); return; }
-        const token = result.access_token;
-        const pickerApi = window.google.picker;
-        const view = new pickerApi.DocsView().setMimeTypes('application/vnd.google-apps.spreadsheet');
-        const picker = new pickerApi.PickerBuilder()
-          .addView(view).setAppId(projectNumber.trim()).setDeveloperKey(apiKey.trim()).setOAuthToken(token)
-          .setCallback(async (data: any) => {
-            if (data.action === pickerApi.Action.CANCEL) { setMessage('Bạn đã đóng cửa sổ chọn file.'); return; }
-            if (data.action !== pickerApi.Action.PICKED) return;
-            const file = data.docs?.[0];
-            if (!file?.id) { setMessage('Không nhận được file đã chọn.'); return; }
-            setMessage('Đang kiểm tra các tab của bảng tính…');
-            try {
-              const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(file.id)}?fields=sheets.properties(sheetId,title)`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error' });
-              if (!response.ok) throw new Error('SHEETS_REQUEST_FAILED');
-              const metadata = await response.json();
-              const found: Tab[] = (metadata.sheets || []).map((item: any) => ({ id: item.properties.sheetId, title: item.properties.title }));
-              setFileName(file.name || 'Bảng tính đã chọn'); setTabs(found);
-              setMessage('Đã đọc danh sách tab. Chưa nhập hoặc đồng bộ nội dung.');
-            } catch { setMessage('Không đọc được bảng tính. Kiểm tra Sheets API, quyền truy cập file và cấu hình Google Cloud.'); }
-          }).build();
-        picker.setVisible(true);
-      },
-    });
-    client.requestAccessToken({ prompt: 'consent' });
-  }
-
-  return <div className="overlay"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="google-title">
-    <div className="section-head"><b id="google-title">Kết nối Google Drive</b><button aria-label="Đóng" onClick={onClose}>✕</button></div>
-    <p className="warning">Bản thử nghiệm chỉ chọn file và đọc danh sách tab. Chưa nhập dữ liệu, lưu dữ liệu hoặc đồng bộ. Hãy dùng bảng tính giả.</p>
-    <p className="google-message" role="status">{message}</p>
-    {fileName && <div><b>{fileName}</b><ul>{tabs.map(tab => <li key={tab.id}>{tab.title}</li>)}</ul></div>}
-    <div className="modal-actions"><button onClick={onClose}>Đóng</button><button className="primary" disabled={!ready} onClick={connect}>Đăng nhập và chọn Google Sheet</button></div>
-  </div></div>;
+declare global { interface Window { google?: any } }
+const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+type Session = {remote: any; password: string; head: string | null};
+type Props = {onClose: () => void; onConnected: (session: Session, accounts: any[]) => void};
+export default function GoogleConnect({onClose,onConnected}: Props) {
+ const [ready,setReady]=useState(false),[token,setToken]=useState(''),[password,setPassword]=useState(''),[confirm,setConfirm]=useState(''),[creating,setCreating]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState('Đăng nhập Google để mở kho AnyNote.');
+ const clientId=import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+ useEffect(()=>{let active=true;const src='https://accounts.google.com/gsi/client';let script=document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null;if(window.google?.accounts?.oauth2){setReady(true);return;} if(!script){script=document.createElement('script');script.src=src;script.async=true;document.head.appendChild(script);} const loaded=()=>{if(active)setReady(true)};const failed=()=>{if(active)setMessage('Không tải được Google. Kiểm tra kết nối mạng.')};script.addEventListener('load',loaded);script.addEventListener('error',failed);return()=>{active=false;script?.removeEventListener('load',loaded);script?.removeEventListener('error',failed)}},[]);
+ function signIn(){if(!clientId.endsWith('.apps.googleusercontent.com')){setMessage('Chưa cấu hình đăng nhập Google.');return;} setMessage('Đang chờ bạn cấp quyền Google…');window.google.accounts.oauth2.initTokenClient({client_id:clientId,scope:SCOPE,error_callback:()=>setMessage('Không thể mở cửa sổ đăng nhập.'),callback:(r:any)=>{if(!r.access_token || r.error){setMessage('Chưa được cấp quyền Google Drive.');return;}setToken(r.access_token);setMessage('Nhập mật khẩu kho AnyNote. Nếu đây là lần đầu, chọn tạo kho mới.');}}).requestAccessToken({prompt:'select_account'});}
+ async function unlock(){if(!password){setMessage('Vui lòng nhập mật khẩu kho.');return;} if(creating && (password.length<12 || password!==confirm)){setMessage('Mật khẩu mới cần ít nhất 12 ký tự và hai ô phải giống nhau.');return;}setBusy(true);try{const remote={list:()=>listVaultFiles(token),read:(id:string)=>readVaultRevision(token,id),upload:(envelope:any)=>uploadVaultRevision(token,envelope)};let state=await loadHistory(remote,password);if(creating){if(state.head!==null)throw new Error('VAULT_EXISTS');state=await saveRevision(remote,password,null,[]);}else if(state.head===null){setMessage('Chưa có kho. Hãy chọn “Tạo kho mới”.');setBusy(false);return;}onConnected({remote,password,head:state.head},state.accounts);}catch(e:any){const m=e?.message;setMessage(m==='VAULT_EXISTS'?'Tài khoản Google này đã có kho; hãy chọn mở kho.':m==='VAULT_CONFLICT'?'Có nhiều phiên bản xung đột. Chưa ghi đè dữ liệu.':m==='DRIVE_AUTH_EXPIRED'?'Phiên Google đã hết hạn. Vui lòng đóng và đăng nhập lại.':'Không thể mở kho. Kiểm tra mật khẩu, quyền Google Drive hoặc kết nối mạng.');}finally{setBusy(false);}}
+ return <div className="overlay"><div className="modal" role="dialog" aria-modal="true" aria-labelledby="google-title"><div className="section-head"><b id="google-title">Kết nối Google Drive</b><button aria-label="Đóng" onClick={onClose}>✕</button></div><p role="status">{message}</p>{!token?<div className="modal-actions"><button onClick={onClose}>Đóng</button><button className="primary" disabled={!ready} onClick={signIn}>Đăng nhập bằng Google</button></div>:<><label><input type="checkbox" checked={creating} onChange={e=>setCreating(e.target.checked)}/> Tạo kho mới</label><div className="fields"><label>Mật khẩu kho<input type="password" autoComplete="off" value={password} onChange={e=>setPassword(e.target.value)}/></label>{creating&&<label>Nhập lại mật khẩu<input type="password" autoComplete="off" value={confirm} onChange={e=>setConfirm(e.target.value)}/></label>}</div><p>Ghi nhớ mật khẩu kho: Google và AnyNote không thể khôi phục dữ liệu nếu bạn quên mật khẩu.</p><div className="modal-actions"><button onClick={onClose}>Đóng</button><button className="primary" disabled={busy} onClick={unlock}>{busy?'Đang xử lý…':creating?'Tạo kho':'Mở kho'}</button></div></>}</div></div>;
 }
