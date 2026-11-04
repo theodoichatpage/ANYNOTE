@@ -168,11 +168,7 @@ function App() {
         </button>
       </header>
       <main>
-        <div className="notice">
-          {window.anynote
-            ? 'BẢN THỬ NGHIỆM · Dữ liệu chỉ lưu trong bộ nhớ và sẽ mất khi đóng ứng dụng. Không nhập mật khẩu hoặc tài khoản thật.'
-            : 'BẢN WEB THỬ NGHIỆM · Dữ liệu chỉ lưu trong bộ nhớ và sẽ mất khi đóng hoặc tải lại trang. Không nhập mật khẩu hoặc tài khoản thật.'}
-        </div>
+        <div className="notice">Bản thử nghiệm: dữ liệu chưa được lưu; chỉ dùng dữ liệu giả.</div>
         <div className="stats">
           {[
             ['Tổng tài khoản', accounts.filter(a => !a.deleted).length],
@@ -353,10 +349,6 @@ function App() {
                 ✕
               </button>
             </div>
-            <p className="warning">
-              Chỉ nhập dữ liệu giả. Nội dung không được lưu sau khi đóng ứng
-              dụng.
-            </p>
             {!isEditing && (
               <div className="quick-entry">
                 <label htmlFor="new-account-group">Nhóm tài khoản</label>
@@ -365,7 +357,6 @@ function App() {
                 </select>
                 <label htmlFor="quick-entry">Dán thông tin tài khoản</label>
                 <textarea id="quick-entry" rows={6} autoComplete="off" spellCheck={false} value={quickEntry} placeholder="Mỗi dòng một tài khoản: ID | Mật khẩu | ..." onChange={e => setQuickEntry(e.target.value)} />
-                <small>Mỗi dòng một tài khoản: ID | Mật khẩu | ... Phần mềm tìm khóa FA và email theo định dạng; dòng gốc được giữ để kiểm tra.</small>
               </div>
             )}
             {isEditing && <div className="fields">
