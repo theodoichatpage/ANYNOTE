@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { saveRevision } from './vault/sync.mjs';
+import { saveGoogleAccounts } from './vault/google-storage.mjs';
 import { createRoot } from 'react-dom/client';
 import { queryAccounts, validateAccount } from './accounts.mjs';
 import './style.css';
@@ -106,7 +106,7 @@ function App() {
       running.current = true; setSyncStatus('Đang lưu lên Google Drive…');
       const snapshot = latestAccounts.current;
       try {
-        const result = await saveRevision(session.remote, session.password, head.current, snapshot);
+        const result = await saveGoogleAccounts(session.remote, head.current, snapshot);
         head.current = result.head; savedAccounts.current = snapshot;
         setSyncStatus(latestAccounts.current === snapshot ? 'Đã lưu lên Google Drive' : 'Đang chờ lưu…');
       } catch (e: any) {
@@ -198,11 +198,11 @@ function App() {
           if (running.current || savedAccounts.current !== latestAccounts.current) { setSyncStatus('Chưa lưu xong. Hãy giữ trang mở và thử lại.'); return; }
           savedAccounts.current = null; head.current = null; setAccounts([]); setSession(null); setShown([]); setSyncStatus('Chưa kết nối');
         }}>
-          {session ? 'Khóa kho / đổi tài khoản' : 'Kết nối Google Drive'}
+          {session ? 'Đăng xuất / đổi tài khoản' : 'Kết nối Google Drive'}
         </button>
       </header>
       <main>
-        <div className="notice">{session ? syncStatus : 'Kết nối Google Drive để mở kho. Phiên bản đang thử nghiệm; chỉ dùng dữ liệu giả.'}{session && stopped.current && <button onClick={() => { stopped.current = false; setRetry(v => v + 1); }}>Thử lưu lại</button>}</div>
+        <div className="notice">{session ? syncStatus : 'Đăng nhập Google để xem và lưu dữ liệu AnyNote. Phiên bản đang thử nghiệm; chỉ dùng dữ liệu giả.'}{session && stopped.current && <button onClick={() => { stopped.current = false; setRetry(v => v + 1); }}>Thử lưu lại</button>}</div>
         <div className="stats">
           {[
             ['Tổng tài khoản', accounts.filter(a => !a.deleted).length],
@@ -367,7 +367,7 @@ function App() {
           </div>
         </div>
       )}
-      {googleDialog && <GoogleConnect onClose={() => setGoogleDialog(false)} onConnected={(newSession, loadedAccounts) => { savedAccounts.current = loadedAccounts; head.current = newSession.head; stopped.current = false; setAccounts(loadedAccounts); setSession(newSession); setSyncStatus('Đã mở kho Google Drive'); setGoogleDialog(false); }} />}
+      {googleDialog && <GoogleConnect onClose={() => setGoogleDialog(false)} onConnected={(newSession, loadedAccounts) => { savedAccounts.current = loadedAccounts; head.current = newSession.head; stopped.current = false; setAccounts(loadedAccounts); setSession(newSession); setSyncStatus('Đã kết nối Google Drive'); setGoogleDialog(false); }} />}
       {draft && (
         <div className="overlay">
           <div className="modal">
